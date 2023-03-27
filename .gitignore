@@ -1,0 +1,9 @@
+# macOS-specific files
+.DS_Store
+
+# VS Code specific files
+.vscode/
+.settings/
+
+# pytorch specific files
+lightning_logs/
