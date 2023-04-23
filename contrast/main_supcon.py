@@ -6,7 +6,6 @@ import argparse
 import time
 import math
 
-#import tensorboard_logger as tb_logger
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
@@ -19,13 +18,6 @@ from losses import SupConLoss
 from distance import get_pairs
 import numpy as np
 import random
-
-try:
-    import apex
-    from apex import amp, optimizers
-except ImportError:
-    pass
-
 
 path_aff = "../features_AFF.npy"
 path_sewa = "../features_trained.npy"
@@ -180,8 +172,13 @@ class train_data(Dataset):
         entry4 = self.sewa_features[random_index]
         label4 = self.sewa_labels[random_index]
 
-        entry = torch.tensor(np.concatenate(([entry1], [entry2], [entry3], [entry4]), axis=0))
-        label = torch.tensor([label1, label2, label3, label4])
+        indices = [i for i in range(self.__len__()) if self.aff_labels[i] == label1]
+        random_index = random.choice(indices)
+        entry5 = self.aff_features[random_index]
+        label5 = self.aff_labels[random_index]
+
+        entry = torch.tensor(np.concatenate(([entry1], [entry2], [entry3], [entry4], [entry5]), axis=0))
+        label = torch.tensor([label1, label2, label3, label4, label5])
 
         return entry, label
     
@@ -236,27 +233,27 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
-        image1, image2, image3, image4 = torch.split(images, split_size_or_sections=1, dim=1)
+        image1, image2, image3, image4, image5 = torch.split(images, split_size_or_sections=1, dim=1)
         feature1 = model(image1)
-        # print("feature1")
-        # print(feature1.shape)
-        # print(feature1)
         feature2 = model(image2)
         feature3 = model(image3)
         feature4 = model(image4)
+        feature5 = model(image5)
 
+        # across aff and sewa
         concat_features1 = torch.cat((feature1, feature2), dim=1)
-        bs = concat_features1.shape[0]
-        #print(concat_features1.shape)
-        labels1, labels2 = torch.split(labels, split_size_or_sections=[2, 2], dim=1)
-        #print(labels1.shape)
+        labels1, labels2, labels3 = torch.split(labels, split_size_or_sections=[2, 2, 1], dim=1)
         loss_supcon = criterion(concat_features1, labels1[:,0])
-        # print('loss',loss_supcon)
 
+        # within sewa
         concat_features2 = torch.cat((feature3, feature4), dim=1)
         loss_infoNCE = criterion(concat_features2, labels2[:,0])
-        # print('loss',loss_infoNCE)
 
+        # within aff
+        concat_features3 = torch.cat((feature1, feature5), dim=1)
+        loss_infoNCE = loss_infoNCE + criterion(concat_features3, labels1[:,0])
+
+        # loss
         loss = loss_supcon + opt.weight * loss_infoNCE
 
         # update metric
