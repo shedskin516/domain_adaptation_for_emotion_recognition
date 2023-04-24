@@ -26,8 +26,8 @@ import random
 
 source_file_path = '../mini_datasets/Aff-Wild2/train.csv'
 target_file_path = '../mini_datasets/SEWA/train.csv'
-batch_size = 500
-mini_batch = 5
+batch_size = 256
+# mini_batch = 10
 output_dim = 128
 temp = 0.07
 num_epochs = 20
@@ -72,7 +72,7 @@ class train_data(Dataset):
    
     def __getitem__(self, idx):
         source_img = Image.open('../data/Aff-Wild2/cropped_aligned/'+self.source_file_path[idx])
-        target_img = Image.open('../data/prep_SEWA/'+self.target_file_path[idx])
+        target_img = Image.open('../data/SEWA/prep_SEWA/'+self.target_file_path[idx])
 
         simg = self.transform(source_img)
         timg = self.transform(target_img)
@@ -95,32 +95,49 @@ def set_optimizer(model):
     return optimizer
 
 def train(train_loader, model, criterion, optimizer, scheduler):
+    avg_loss = 0
     for index, (simg, timg) in enumerate(train_loader):
         simg, timg = simg.to(device), timg.to(device)
         sfeature = model(simg)
         tfeature = model(timg)
+        if index > 0:
+            print(sfeature)
         source_labels, target_labels = get_pairs(sfeature, tfeature, n_clusters)
+        batch_loss = 0
         for k in range(n_clusters):
-            source_index = random.sample([i for i in range(len(source_labels)) if source_labels[i] == k], mini_batch)
-            target_index = random.sample([i for i in range(len(target_labels)) if target_labels[i] == k], mini_batch)
+            source_index = [i for i in range(len(source_labels)) if source_labels[i] == k]
+            target_index = [i for i in range(len(target_labels)) if target_labels[i] == k]
+            length = min(len(source_index), len(target_index))
 
             # source_cat_features = torch.
-            source_cat_features = torch.cat(tuple(sfeature[i].unsqueeze(0) for i in source_index), dim=0)
-            target_cat_features = torch.cat(tuple(tfeature[i].unsqueeze(0) for i in target_index), dim=0)
-            print(source_cat_features.shape)
-            print(target_cat_features.shape)
+            source_cat_features = torch.cat(tuple(sfeature[i].unsqueeze(0) for i in source_index[:length]), dim=0)
+            target_cat_features = torch.cat(tuple(tfeature[i].unsqueeze(0) for i in target_index[:length]), dim=0)
+            # print(source_cat_features.shape)
+            # print(target_cat_features.shape)
 
             concat_features = torch.cat((source_cat_features, target_cat_features), dim=1)
-            labels = torch.tensor([k for i in range(mini_batch)])
+            concat_features = concat_features.reshape(length, 1, output_dim*2)
             print(concat_features.shape)
-            concat_features = concat_features.reshape(mini_batch, 1, output_dim*2)
-            
-            loss_supcon = criterion(concat_features, labels)
-            print(loss_supcon)
-            break
-        print(sfeature.shape)
-        print(tfeature.shape)
-        break
+            labels = torch.tensor([k for i in range(length)])
+            print(labels)
+
+            loss = criterion(concat_features, labels)
+            # print(loss_supcon)
+            # break
+            optimizer.zero_grad()
+            loss.backward(retain_graph=True)
+            optimizer.step()
+            scheduler.step()
+            batch_loss += loss.item()
+            print(f"{k}: loss:{loss.item()}")
+        batch_loss = batch_loss/k
+        avg_loss += batch_loss
+    avg_loss /= len(train_loader)
+    return avg_loss
+
+        # print(sfeature.shape)
+        # print(tfeature.shape)
+        # break
 
 
 
@@ -134,7 +151,7 @@ def main():
         time1 = time.time()
         loss = train(train_loader, model, criterion, optimizer, scheduler)
         time2 = time.time()
-        break
+        # break
         print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
         print('loss: ', loss)
         # tensorboard logger
