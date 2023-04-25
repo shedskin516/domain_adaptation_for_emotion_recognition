@@ -86,6 +86,8 @@ def set_model():
     model = Classifier()
     model.encoder = pretrained_model.encoder
     model = model.to(device)
+    for param in model.encoder.parameters():
+        param.requires_grad = False
 
     criterion = nn.MSELoss()
 
