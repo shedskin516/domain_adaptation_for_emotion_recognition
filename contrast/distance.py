@@ -11,8 +11,8 @@ import torch.nn.functional as F
 from sklearn.decomposition import PCA
 
 def get_pairs(source_feature, target_feature, n_clusters):
-    source_feature = source_feature.detach().numpy()
-    target_feature = target_feature.detach().numpy()
+    source_feature = source_feature.detach().cpu().numpy()
+    target_feature = target_feature.detach().cpu().numpy()
 
     source_kmeans = KMeans(n_clusters=n_clusters).fit(source_feature)
     source_cluster_centers = source_kmeans.cluster_centers_
@@ -34,8 +34,8 @@ def get_pairs(source_feature, target_feature, n_clusters):
     # Hungarian algorithm to pair the clusters
     row_ind, col_ind = linear_sum_assignment(wasserstein_distances)
 
-    for i in range(n_clusters):
-        print("aff cluster", i, "is paired with sewa cluster", col_ind[i])
+    # for i in range(n_clusters):
+    #     print("aff cluster", i, "is paired with sewa cluster", col_ind[i])
 
     # Allocate identical numbers to the related clusters in both datasets."
     for i in range(len(source_labels)):
