@@ -5,41 +5,30 @@ import sys
 import argparse
 import time
 import math
+import numpy as np
+import random
+import pandas as pd
+from PIL import Image
 
 import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 
 from util import AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
 from util import set_optimizer, save_model
+
 from losses import SupConLoss
 from distance import get_pairs
-import numpy as np
-import random
+from model import Encoder
 
-path_aff = "../features_AFF.npy"
-path_sewa = "../features_trained.npy"
+path_aff = "../features_aff_20k.npy"
+path_sewa = "../features_sewa_20k.npy"
 
-
-class MlpNet(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super().__init__()
-        self.fc1 = nn.Linear(input_dim, 128)
-        self.relu1 = nn.ReLU()        
-        self.fc2 = nn.Linear(128, 32)
-        self.relu2 = nn.ReLU()
-        self.fc3 = nn.Linear(32, output_dim)
-
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu1(x)
-        x = self.fc2(x)
-        x = self.relu2(x)
-        x = self.fc3(x)
-        return x
-
+source_file_path = '../mini_datasets/Aff-Wild2/train.csv'
+target_file_path = '../mini_datasets/SEWA/train.csv'
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
@@ -48,7 +37,7 @@ def parse_option():
                         help='print frequency')
     parser.add_argument('--save_freq', type=int, default=50,
                         help='save frequency')
-    parser.add_argument('--batch_size', type=int, default=256,
+    parser.add_argument('--batch_size', type=int, default=16,
                         help='batch_size')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='num of workers to use')
@@ -76,7 +65,7 @@ def parse_option():
     parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
     parser.add_argument('--size', type=int, default=32, help='parameter for RandomResizedCrop')
     parser.add_argument('--input_dim', type=int, default=128, help='parameter for input size')
-    parser.add_argument('--output_dim', type=int, default=16, help='parameter for output size')
+    parser.add_argument('--output_dim', type=int, default=128, help='parameter for output size')
     parser.add_argument('--weight', type=int, default=0.8, help='parameter for output size')
 
     # method
@@ -150,34 +139,51 @@ def parse_option():
 
 class train_data(Dataset):
     def __init__(self):
-        self.aff_features = np.load(path_aff)
-        self.sewa_features = np.load(path_sewa)
+        source_file = pd.read_csv(source_file_path)
+        total_source_file = source_file['file_path'].tolist()
+        self.source_file_path = total_source_file[:1000]
+
+        target_file = pd.read_csv(target_file_path)
+        total_target_file = target_file['file_path'].tolist()
+        self.target_file_path = total_target_file[:1000]
+
+        transform_list = [  transforms.Resize(112),
+                            transforms.RandomHorizontalFlip(),
+                            transforms.ToTensor(),
+                            transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]),
+                            transforms.RandomErasing(scale=(0.02,0.25))]
+        self.transform = transforms.Compose(transform_list)
+    
         self.aff_labels, self.sewa_labels = get_pairs(path_aff, path_sewa)
 
+
     def __len__(self):
-        return len(self.aff_labels)
+        return len(self.source_file_path)
    
     def __getitem__(self, idx):
-        entry1 = self.aff_features[idx]
+        aff_dir = '../../Face-Warping-Emotion-Recognition-main/data/Aff-Wild2/cropped_aligned/'
+        sewa_dir = '../../Face-Warping-Emotion-Recognition-main/data/SEWA/prep_SEWA/'
+
+        entry1 = self.transform(Image.open(aff_dir + self.source_file_path[idx]))
         label1 = self.aff_labels[idx]
         indices = [i for i in range(self.__len__()) if self.sewa_labels[i] == label1]
         random_index = random.choice(indices)
-        entry2 = self.sewa_features[random_index]
+        entry2 = self.transform(Image.open(sewa_dir + self.target_file_path[random_index]))
         label2 = self.sewa_labels[random_index]
 
-        entry3 = self.sewa_features[idx]
+        entry3 = self.transform(Image.open(sewa_dir + self.target_file_path[idx]))
         label3 = self.sewa_labels[idx]
         indices = [i for i in range(self.__len__()) if self.sewa_labels[i] == label3]
         random_index = random.choice(indices)
-        entry4 = self.sewa_features[random_index]
+        entry4 = self.transform(Image.open(sewa_dir + self.target_file_path[random_index]))
         label4 = self.sewa_labels[random_index]
 
         indices = [i for i in range(self.__len__()) if self.aff_labels[i] == label1]
         random_index = random.choice(indices)
-        entry5 = self.aff_features[random_index]
+        entry5 = self.transform(Image.open(aff_dir + self.source_file_path[random_index]))
         label5 = self.aff_labels[random_index]
 
-        entry = torch.tensor(np.concatenate(([entry1], [entry2], [entry3], [entry4], [entry5]), axis=0))
+        entry = np.concatenate((entry1, entry2, entry3, entry4, entry5), axis=0)
         label = torch.tensor([label1, label2, label3, label4, label5])
 
         return entry, label
@@ -199,7 +205,7 @@ def set_loader(opt):
     return train_loader
 
 def set_model(opt):
-    model = MlpNet(input_dim=opt.input_dim, output_dim=opt.output_dim)
+    model = Encoder(output_dim=opt.output_dim)
     criterion = SupConLoss(temperature=opt.temp)
 
     if torch.cuda.is_available():
@@ -233,13 +239,13 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
 
         # compute loss
-        image1, image2, image3, image4, image5 = torch.split(images, split_size_or_sections=1, dim=1)
-        feature1 = model(image1)
-        feature2 = model(image2)
-        feature3 = model(image3)
-        feature4 = model(image4)
-        feature5 = model(image5)
-
+        image1, image2, image3, image4, image5 = torch.split(images, split_size_or_sections=3, dim=1)
+        feature1 = model(image1).unsqueeze(1)
+        feature2 = model(image2).unsqueeze(1)
+        feature3 = model(image3).unsqueeze(1)
+        feature4 = model(image4).unsqueeze(1)
+        feature5 = model(image5).unsqueeze(1)
+        
         # across aff and sewa
         concat_features1 = torch.cat((feature1, feature2), dim=1)
         labels1, labels2, labels3 = torch.split(labels, split_size_or_sections=[2, 2, 1], dim=1)
@@ -267,6 +273,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
+        print(idx)
 
         if (idx + 1) % opt.print_freq == 0:
             print('Train: [{0}][{1}/{2}]\t'
