@@ -37,7 +37,7 @@ def parse_option():
                         help='print frequency')
     parser.add_argument('--save_freq', type=int, default=50,
                         help='save frequency')
-    parser.add_argument('--batch_size', type=int, default=16,
+    parser.add_argument('--batch_size', type=int, default=256,
                         help='batch_size')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='num of workers to use')
@@ -245,7 +245,7 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         feature3 = model(image3).unsqueeze(1)
         feature4 = model(image4).unsqueeze(1)
         feature5 = model(image5).unsqueeze(1)
-        
+
         # across aff and sewa
         concat_features1 = torch.cat((feature1, feature2), dim=1)
         labels1, labels2, labels3 = torch.split(labels, split_size_or_sections=[2, 2, 1], dim=1)
@@ -260,8 +260,9 @@ def train(train_loader, model, criterion, optimizer, epoch, opt):
         loss_infoNCE = loss_infoNCE + criterion(concat_features3, labels1[:,0])
 
         # loss
-        loss = loss_supcon + opt.weight * loss_infoNCE
-
+        loss = (loss_supcon + opt.weight * loss_infoNCE) / (1 + opt.weight)
+        print(loss)
+        
         # update metric
         losses.update(loss.item(), bsz)
 
